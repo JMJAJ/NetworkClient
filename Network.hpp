@@ -6,6 +6,12 @@
 #include <optional>
 #include <chrono>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <wininet.h>
+#pragma comment(lib, "wininet.lib")
+#endif
+
 class Network {
 public:
     // Enum for HTTP methods
@@ -55,16 +61,25 @@ public:
     static NetworkResponse Post(
         const std::string& url,
         const std::string& payload,
-        const std::string& content_type = "application/json",
+        const std::string& content_type = "application/x-www-form-urlencoded",
         const RequestConfig& config = RequestConfig()
     );
 
-    // Utility methods
-    static std::string UrlEncode(const std::string& input);
-    static std::string Base64Encode(const std::string& input);
+    static NetworkResponse Put(
+        const std::string& url,
+        const std::string& payload,
+        const std::string& content_type = "application/x-www-form-urlencoded",
+        const RequestConfig& config = RequestConfig()
+    );
+
+    static NetworkResponse Delete(
+        const std::string& url,
+        const RequestConfig& config = RequestConfig()
+    );
 
 private:
-    // Internal URL parsing method
+    static std::string UrlEncode(const std::string& input);
+    static std::string Base64Encode(const std::string& input);
     static bool ParseUrl(
         const std::string& url,
         std::string& protocol,
@@ -72,10 +87,9 @@ private:
         std::string& path,
         int& port
     );
-
-    // Low-level socket operations
-    static int CreateSocket(const std::string& host, int port);
-    static void CloseSocket(int socket);
+    
+    // WinINet handling
+    static HINTERNET hInternet;
 };
 
 #endif // SIMPLE_NETWORK_HPP

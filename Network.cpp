@@ -3,35 +3,28 @@
 #include <sstream>
 #include <algorithm>
 #include <cctype>
+#include <wininet.h>
 
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")
-#else
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <unistd.h>
-#include <arpa/inet.h>
-#endif
+#pragma comment(lib, "wininet.lib")
 
-#pragma warning(disable : 4996)
+HINTERNET Network::hInternet = NULL;
 
-// Implementation of methods
 bool Network::Initialize() {
-#ifdef _WIN32
-    WSADATA wsaData;
-    return WSAStartup(MAKEWORD(2, 2), &wsaData) == 0;
-#else
-    return true;
-#endif
+    hInternet = InternetOpen(
+        L"Network/1.0",
+        INTERNET_OPEN_TYPE_DIRECT,
+        NULL,
+        NULL,
+        0
+    );
+    return hInternet != NULL;
 }
 
 void Network::Cleanup() {
-#ifdef _WIN32
-    WSACleanup();
-#endif
+    if (hInternet) {
+        InternetCloseHandle(hInternet);
+        hInternet = NULL;
+    }
 }
 
 Network::NetworkResponse Network::Request(
@@ -50,89 +43,130 @@ Network::NetworkResponse Network::Request(
         return response;
     }
 
-    // Create socket
-    int sock = CreateSocket(host, port);
-    if (sock < 0) {
-        response.success = false;
-        response.error_message = "Socket creation failed";
+    // Convert host and path to wide strings
+    std::wstring whost(host.begin(), host.end());
+    std::wstring wpath(path.begin(), path.end());
+
+    // Connect to server
+    DWORD flags = (protocol == "https") ? INTERNET_FLAG_SECURE : 0;
+    HINTERNET hConnect = InternetConnectA(
+        hInternet,
+        host.c_str(),
+        port,
+        NULL,
+        NULL,
+        INTERNET_SERVICE_HTTP,
+        0,
+        0
+    );
+
+    if (!hConnect) {
+        response.error_message = "Failed to connect to server";
         return response;
     }
 
-    // Construct request based on method
-    std::ostringstream request;
-    std::string method_str;
+    // Convert method to string
+    const char* method_str;
     switch (method) {
-    case Method::HTTP_GET: method_str = "GET"; break;
-    case Method::HTTP_POST: method_str = "POST"; break;
-    case Method::HTTP_PUT: method_str = "PUT"; break;
-    case Method::HTTP_DELETE: method_str = "DELETE"; break;
-    case Method::HTTP_PATCH: method_str = "PATCH"; break;
+        case Method::HTTP_GET: method_str = "GET"; break;
+        case Method::HTTP_POST: method_str = "POST"; break;
+        case Method::HTTP_PUT: method_str = "PUT"; break;
+        case Method::HTTP_PATCH: method_str = "PATCH"; break;
+        case Method::HTTP_DELETE: method_str = "DELETE"; break;
+        default: method_str = "GET";
     }
 
-    request << method_str << " " << path << " HTTP/1.1\r\n"
-        << "Host: " << host << "\r\n";
+    // Open request
+    HINTERNET hRequest = HttpOpenRequestA(
+        hConnect,
+        method_str,
+        path.c_str(),
+        NULL,
+        NULL,
+        NULL,
+        flags,
+        0
+    );
 
-    // Add additional headers
+    if (!hRequest) {
+        InternetCloseHandle(hConnect);
+        response.error_message = "Failed to create request";
+        return response;
+    }
+
+    // Add headers
+    std::string headers;
     for (const auto& header : config.additional_headers) {
-        request << header.first << ": " << header.second << "\r\n";
+        headers += header.first + ": " + header.second + "\r\n";
     }
 
-    // Handle payload for methods that support it
-    if (payload && (method == Method::HTTP_POST || method == Method::HTTP_PUT || method == Method::HTTP_PATCH)) {
-        request << "Content-Type: application/json\r\n"
-            << "Content-Length: " << payload->length() << "\r\n";
+    if (!headers.empty()) {
+        HttpAddRequestHeadersA(
+            hRequest,
+            headers.c_str(),
+            -1,
+            HTTP_ADDREQ_FLAG_ADD
+        );
     }
-
-    request << "Connection: close\r\n\r\n";
-
-    if (payload) {
-        request << *payload;
-    }
-
-    std::string request_str = request.str();
 
     // Send request
-    if (send(sock, request_str.c_str(), request_str.length(), 0) < 0) {
-        response.success = false;
-        response.error_message = "Send failed";
-        CloseSocket(sock);
+    BOOL success;
+    if (payload) {
+        success = HttpSendRequestA(
+            hRequest,
+            NULL,
+            0,
+            (LPVOID)payload->c_str(),
+            payload->length()
+        );
+    } else {
+        success = HttpSendRequestA(
+            hRequest,
+            NULL,
+            0,
+            NULL,
+            0
+        );
+    }
+
+    if (!success) {
+        InternetCloseHandle(hRequest);
+        InternetCloseHandle(hConnect);
+        response.error_message = "Failed to send request";
         return response;
     }
 
-    // Receive response
-    std::string raw_response;
+    // Get status code
+    DWORD status_code = 0;
+    DWORD size = sizeof(status_code);
+    HttpQueryInfoA(
+        hRequest,
+        HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER,
+        &status_code,
+        &size,
+        NULL
+    );
+    response.status_code = status_code;
+
+    // Read response
+    std::string response_body;
     char buffer[4096];
-    int bytes_read;
-    while ((bytes_read = recv(sock, buffer, sizeof(buffer) - 1, 0)) > 0) {
-        buffer[bytes_read] = '\0';
-        raw_response += buffer;
+    DWORD bytes_read;
+    while (InternetReadFile(hRequest, buffer, sizeof(buffer), &bytes_read) && bytes_read > 0) {
+        response_body.append(buffer, bytes_read);
     }
 
-    // Close socket
-    CloseSocket(sock);
+    response.body = response_body;
+    response.success = (status_code >= 200 && status_code < 300);
 
-    // Parse response
-    size_t header_end = raw_response.find("\r\n\r\n");
-    if (header_end != std::string::npos) {
-        std::string headers_str = raw_response.substr(0, header_end);
-        response.body = raw_response.substr(header_end + 4);
-
-        // Parse status code
-        size_t status_start = headers_str.find("HTTP/1.1 ");
-        if (status_start != std::string::npos) {
-            response.status_code = std::stoi(headers_str.substr(status_start + 9, 3));
-        }
-
-        response.success = (response.status_code >= 200 && response.status_code < 300);
-    }
+    // Clean up
+    InternetCloseHandle(hRequest);
+    InternetCloseHandle(hConnect);
 
     return response;
 }
 
-Network::NetworkResponse Network::Get(
-    const std::string& url,
-    const RequestConfig& config
-) {
+Network::NetworkResponse Network::Get(const std::string& url, const RequestConfig& config) {
     return Request(Method::HTTP_GET, url, std::nullopt, config);
 }
 
@@ -142,9 +176,61 @@ Network::NetworkResponse Network::Post(
     const std::string& content_type,
     const RequestConfig& config
 ) {
-    RequestConfig modified_config = config;
-    modified_config.additional_headers["Content-Type"] = content_type;
-    return Request(Method::HTTP_POST, url, payload, modified_config);
+    RequestConfig cfg = config;
+    cfg.additional_headers["Content-Type"] = content_type;
+    return Request(Method::HTTP_POST, url, payload, cfg);
+}
+
+Network::NetworkResponse Network::Put(
+    const std::string& url,
+    const std::string& payload,
+    const std::string& content_type,
+    const RequestConfig& config
+) {
+    RequestConfig cfg = config;
+    cfg.additional_headers["Content-Type"] = content_type;
+    return Request(Method::HTTP_PUT, url, payload, cfg);
+}
+
+Network::NetworkResponse Network::Delete(const std::string& url, const RequestConfig& config) {
+    return Request(Method::HTTP_DELETE, url, std::nullopt, config);
+}
+
+bool Network::ParseUrl(
+    const std::string& url,
+    std::string& protocol,
+    std::string& host,
+    std::string& path,
+    int& port
+) {
+    // Basic URL parsing (simplified)
+    size_t protocol_end = url.find("://");
+    if (protocol_end == std::string::npos) return false;
+
+    protocol = url.substr(0, protocol_end);
+    size_t host_start = protocol_end + 3;
+    size_t path_start = url.find('/', host_start);
+
+    if (path_start == std::string::npos) {
+        host = url.substr(host_start);
+        path = "/";
+    }
+    else {
+        host = url.substr(host_start, path_start - host_start);
+        path = url.substr(path_start);
+    }
+
+    // Default ports
+    port = (protocol == "https") ? 443 : 80;
+
+    // Check for custom port
+    size_t port_sep = host.find(':');
+    if (port_sep != std::string::npos) {
+        port = std::stoi(host.substr(port_sep + 1));
+        host = host.substr(0, port_sep);
+    }
+
+    return true;
 }
 
 std::string Network::UrlEncode(const std::string& input) {
@@ -208,76 +294,4 @@ std::string Network::Base64Encode(const std::string& input) {
     }
 
     return encoded;
-}
-
-bool Network::ParseUrl(
-    const std::string& url,
-    std::string& protocol,
-    std::string& host,
-    std::string& path,
-    int& port
-) {
-    // Basic URL parsing
-    size_t protocol_end = url.find("://");
-    if (protocol_end == std::string::npos) return false;
-
-    protocol = url.substr(0, protocol_end);
-    size_t host_start = protocol_end + 3;
-    size_t path_start = url.find('/', host_start);
-
-    if (path_start == std::string::npos) {
-        host = url.substr(host_start);
-        path = "/";
-    }
-    else {
-        host = url.substr(host_start, path_start - host_start);
-        path = url.substr(path_start);
-    }
-
-    // Default ports
-    port = (protocol == "https") ? 443 : 80;
-
-    // Check for custom port
-    size_t port_sep = host.find(':');
-    if (port_sep != std::string::npos) {
-        port = std::stoi(host.substr(port_sep + 1));
-        host = host.substr(0, port_sep);
-    }
-
-    return true;
-}
-
-int Network::CreateSocket(const std::string& host, int port) {
-    // Socket creation logic
-#ifdef _WIN32
-    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sock == INVALID_SOCKET) return -1;
-#else
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) return -1;
-#endif
-
-    struct sockaddr_in server_addr {};
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-
-    struct hostent* server = gethostbyname(host.c_str());
-    if (!server) return -1;
-
-    std::memcpy(&server_addr.sin_addr.s_addr, server->h_addr, server->h_length);
-
-    if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        CloseSocket(sock);
-        return -1;
-    }
-
-    return sock;
-}
-
-void Network::CloseSocket(int socket) {
-#ifdef _WIN32
-    closesocket(socket);
-#else
-    close(socket);
-#endif
 }
