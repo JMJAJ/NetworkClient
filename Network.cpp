@@ -18,7 +18,7 @@
 
 #pragma warning(disable : 4996)
 
-// Implementation of methods (simplified for brevity)
+// Implementation of methods
 bool Network::Initialize() {
 #ifdef _WIN32
     WSADATA wsaData;
@@ -111,13 +111,13 @@ Network::NetworkResponse Network::Request(
     // Close socket
     CloseSocket(sock);
 
-    // Parse response (simplified)
+    // Parse response
     size_t header_end = raw_response.find("\r\n\r\n");
     if (header_end != std::string::npos) {
         std::string headers_str = raw_response.substr(0, header_end);
         response.body = raw_response.substr(header_end + 4);
 
-        // Parse status code (simplified)
+        // Parse status code
         size_t status_start = headers_str.find("HTTP/1.1 ");
         if (status_start != std::string::npos) {
             response.status_code = std::stoi(headers_str.substr(status_start + 9, 3));
@@ -217,7 +217,7 @@ bool Network::ParseUrl(
     std::string& path,
     int& port
 ) {
-    // Basic URL parsing (simplified)
+    // Basic URL parsing
     size_t protocol_end = url.find("://");
     if (protocol_end == std::string::npos) return false;
 
@@ -248,7 +248,7 @@ bool Network::ParseUrl(
 }
 
 int Network::CreateSocket(const std::string& host, int port) {
-    // Socket creation logic (simplified)
+    // Socket creation logic
 #ifdef _WIN32
     SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock == INVALID_SOCKET) return -1;
