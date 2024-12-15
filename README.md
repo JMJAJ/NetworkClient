@@ -24,13 +24,13 @@ cd NetworkClient
 ```
 
 Copy the following files into your project:
-- `AdvancedNetwork.hpp`
-- `AdvancedNetwork.cpp`
+- `Network.hpp`
+- `Network.cpp`
 
 ### Usage
-Include `AdvancedNetwork.hpp` in your project and use the `Network` class to make HTTP requests:
+Include `Network.hpp` in your project and use the `Network` class to make HTTP requests:
 ```cpp
-#include "AdvancedNetwork.hpp"
+#include "Network.hpp"
 #include <iostream>
 
 int main() {
@@ -149,14 +149,14 @@ int main() {
 ```
 
 ### Build
-Compile your project along with `AdvancedNetwork.cpp`. For example, using `g++`:
+Compile your project along with `Network.cpp`. For example, using `g++`:
 ```bash
-g++ -o main main.cpp AdvancedNetwork.cpp -std=c++17
+g++ -o main main.cpp Network.cpp -std=c++17
 ```
 
 On Windows, remember to link with the Winsock library:
 ```bash
-g++ -o main main.cpp AdvancedNetwork.cpp -std=c++17 -lws2_32
+g++ -o main main.cpp Network.cpp -std=c++17 -lws2_32
 ```
 
 ### API Overview
