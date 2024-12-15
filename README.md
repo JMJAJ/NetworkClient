@@ -126,7 +126,7 @@ int main() {
 
         // 6. Failed Request Test (non-existent domain)
         std::cout << "\n=== Testing Failed Request ===" << std::endl;
-        auto failed_response = Network::Get("http://nonexistentdomain123456.com");
+        auto failed_response = Network::Get("http://bigboobsnonexistentdomain123456.com");
         if (!failed_response.success) {
             std::cout << "Failed Request Test Passed" << std::endl;
             std::cout << "Error Message: " << failed_response.error_message << std::endl;
