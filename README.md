@@ -159,6 +159,8 @@ On Windows, remember to link with the Winsock library:
 g++ -o main main.cpp Network.cpp -std=c++17 -lws2_32
 ```
 
+Or you can use whatever you are familiar with
+
 ### API Overview
 Here’s a quick overview of the provided methods:
 
