@@ -213,7 +213,7 @@ bool Network::ParseUrl(
     std::string& path,
     int& port
 ) {
-    // Basic URL parsing (simplified)
+    // Basic URL parsing
     size_t protocol_end = url.find("://");
     if (protocol_end == std::string::npos) return false;
 
