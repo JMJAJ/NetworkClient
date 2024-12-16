@@ -27,10 +27,8 @@ cd NetworkClient
 ```
 
 Copy the following files into your project:
-- `net/Network.hpp`
-- `net/Network.cpp`
-- `net/SimpleNetwork.hpp`
-- `net/SimpleNetwork.cpp`
+- `Network.hpp`
+- `Network.cpp`
 
 ### Testing
 The project includes a comprehensive test suite in `main.cpp` that verifies:
@@ -48,7 +46,7 @@ To run the tests:
 ### Usage
 Include `Network.hpp` in your project and use the `Network` class to make HTTP requests:
 ```cpp
-#include "net/Network.hpp"
+#include "Network.hpp"
 #include <iostream>
 
 int main() {
