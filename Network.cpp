@@ -77,6 +77,16 @@ Network::NetworkResponse Network::Request(
     }
 
     // Open request
+    flags = (protocol == "https") ? 
+        (INTERNET_FLAG_SECURE | 
+         INTERNET_FLAG_IGNORE_CERT_CN_INVALID |
+         INTERNET_FLAG_IGNORE_CERT_DATE_INVALID) : 0;
+         
+    if (config.follow_redirects) {
+        flags |= INTERNET_FLAG_IGNORE_REDIRECT_TO_HTTP |
+                INTERNET_FLAG_IGNORE_REDIRECT_TO_HTTPS;
+    }
+    
     HINTERNET hRequest = HttpOpenRequestA(
         hConnect,
         method_str,
