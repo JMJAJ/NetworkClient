@@ -1,5 +1,5 @@
-#ifndef SIMPLE_NETWORK_HPP
-#define SIMPLE_NETWORK_HPP
+#ifndef NETWORK_HPP
+#define NETWORK_HPP
 
 #include <string>
 #include <map>
@@ -92,4 +92,4 @@ private:
     static HINTERNET hInternet;
 };
 
-#endif // SIMPLE_NETWORK_HPP
+#endif // NETWORK_HPP
