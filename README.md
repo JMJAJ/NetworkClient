@@ -1,6 +1,6 @@
 # NetworkClient
 
-**NetworkClient** is a lightweight and portable C++ library for making HTTP requests, encoding data, and parsing URLs. It is implemented as header (`.hpp`) and source (`.cpp`) files, making it easy to integrate directly into your project without pre-compiling a library.
+**NetworkClient** is a lightweight and portable C++ library for making HTTP/HTTPS requests, encoding data, and parsing URLs. It is implemented as header (`.hpp`) and source (`.cpp`) files, making it easy to integrate directly into your project without pre-compiling a library.
 
 ## Features
 - Cross-platform compatibility
