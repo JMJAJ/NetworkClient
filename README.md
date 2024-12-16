@@ -38,11 +38,6 @@ The project includes a comprehensive test suite in `main.cpp` that verifies:
 - Redirect following
 - Timeout behavior
 
-To run the tests:
-```cpp
-// Compile and run main.cpp
-```
-
 ### Usage
 Include `Network.hpp` in your project and use the `Network` class to make HTTP requests:
 ```cpp
