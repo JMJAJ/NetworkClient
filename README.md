@@ -1,109 +1,258 @@
-# NetworkClient
+# Network Class Library
 
-**NetworkClient** is a lightweight and portable C++ library for making HTTP/HTTPS requests, encoding data, and parsing URLs. It is implemented as header (`.hpp`) and source (`.cpp`) files, making it easy to integrate directly into your project without pre-compiling a library.
+A modern C++ HTTP networking library built on Windows Internet (WinINet) API, providing a simple yet powerful interface for making HTTP/HTTPS requests.
 
 ## Features
-- Cross-platform compatibility
-- Supports multiple HTTP methods (GET, POST, PUT, DELETE, PATCH)
-- HTTPS support with secure connections
-- URL parsing and validation
-- Base64 encoding and URL encoding utilities
-- Configurable request options (timeouts, redirects, custom headers)
-- Comprehensive test suite for HTTP and HTTPS functionality
-- No pre-built library needed—just include the `.hpp` and `.cpp` files
 
-## Getting Started
+- **HTTP Methods Support**
+  - GET, POST, PUT, PATCH, DELETE
+  - Configurable request headers
+  - Form data and JSON payload support
+  - Response headers and body handling
 
-### Prerequisites
+- **Security**
+  - SSL/TLS support with certificate validation
+  - TLS 1.2+ enforcement option
+  - API key and OAuth token support
+  - Custom security flags configuration
+
+- **Advanced Features**
+  - Automatic retry mechanism with exponential backoff
+  - Rate limiting with precise timing
+  - Timeout handling at multiple levels
+  - Redirect following with max limit
+  - URL encoding and Base64 encoding utilities
+
+- **Error Handling**
+  - Detailed error messages
+  - Status code validation
+  - Connection error recovery
+  - Invalid URL/protocol detection
+
+## Requirements
+
+- Windows OS
 - C++17 or later
-- A C++ compiler compatible with your operating system
-- For Windows: WinINet library (wininet.lib)
+- Visual Studio 2019 or later
+- WinINet library (included in Windows SDK)
 
-### Installation
-Clone the repository:
+## Installation
+
+1. Clone the repository:
 ```bash
 git clone https://github.com/JMJAJ/NetworkClient.git
-cd NetworkClient
 ```
 
-Copy the following files into your project:
-- `Network.hpp`
-- `Network.cpp`
-
-### Testing
-The project includes a comprehensive test suite in `main.cpp` that verifies:
-- HTTP GET/POST requests
-- HTTPS GET/POST requests
-- Custom header handling
-- Redirect following
-- Timeout behavior
-
-### Usage
-Include `Network.hpp` in your project and use the `Network` class to make HTTP requests:
+2. Include the library in your project:
 ```cpp
 #include "Network.hpp"
-#include <iostream>
+```
 
-int main() {
-    // Initialize network (important for Windows)
-    if (!Network::Initialize()) {
-        std::cerr << "Network initialization failed!" << std::endl;
-        return 1;
-    }
+3. Link against WinINet:
+```cpp
+#pragma comment(lib, "wininet.lib")
+```
 
-    try {
-        // Configure request options
-        Network::RequestConfig config;
-        config.timeout_seconds = 30;
-        config.follow_redirects = true;
-        config.additional_headers["User-Agent"] = "NetworkClient/1.0";
+## Quick Start
 
-        // Make HTTPS GET request
-        auto response = Network::Get("https://api.example.com/data", config);
-        if (response.success) {
-            std::cout << "Status Code: " << response.status_code << std::endl;
-            std::cout << "Response: " << response.body << std::endl;
-        }
+```cpp
+// Initialize the library
+if (!Network::Initialize()) {
+    std::cerr << "Failed to initialize network\n";
+    return 1;
+}
 
-        // Make POST request with JSON data
-        std::string json_payload = "{\"key\":\"value\"}";
-        response = Network::Post(
-            "https://api.example.com/update",
-            json_payload,
-            "application/json",
-            config
-        );
-    }
-    catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-    }
+// Make a GET request
+auto response = Network::Get("https://httpbin.org/get");
+if (response.success) {
+    std::cout << "Response: " << response.body << "\n";
+}
 
-    // Always cleanup
-    Network::Cleanup();
-    return 0;
+// Make a POST request with custom headers
+Network::RequestConfig config;
+config.additional_headers["Content-Type"] = "application/json";
+config.timeout_seconds = 30;
+
+auto response = Network::Post(
+    "https://postman-echo.com/post",
+    "{\"key\": \"value\"}",
+    "application/json",
+    config
+);
+
+// Cleanup
+Network::Cleanup();
+```
+
+## Advanced Usage
+
+### Custom Configuration
+
+```cpp
+Network::RequestConfig config;
+
+// Security settings
+config.verify_ssl = true;
+config.use_tls12_or_higher = true;
+
+// Retry settings
+config.max_retries = 3;
+config.retry_delay_ms = 1000;
+
+// Rate limiting
+config.rate_limit_per_minute = 60;
+
+// Authentication
+config.api_key = "your-api-key";
+config.oauth_token = "your-oauth-token";
+
+// Custom headers
+config.additional_headers["User-Agent"] = "MyApp/1.0";
+config.additional_headers["Accept"] = "application/json";
+```
+
+### Error Handling
+
+```cpp
+auto response = Network::Request(
+    Network::Method::HTTP_GET,
+    "https://httpbin.org/status/404"  // Will return 404 Not Found
+);
+
+if (!response.success) {
+    std::cerr << "Error: " << response.error_message << "\n";
+    std::cerr << "Status Code: " << response.status_code << "\n";
 }
 ```
 
-Check more in [`example.cpp`](https://github.com/JMJAJ/NetworkClient/blob/main/example.cpp)
+### Rate Limiting Example
 
-## API Reference
+```cpp
+Network::RequestConfig config;
+config.rate_limit_per_minute = 30;  // 30 requests per minute
 
-### Core Methods
-- `Network::Initialize()` - Must be called before using any network methods
-- `Network::Cleanup()` - Must be called to release network resources
-- `Network::Get(url, config)` - Perform HTTP/HTTPS GET request
-- `Network::Post(url, payload, content_type, config)` - Perform HTTP/HTTPS POST request
-- `Network::Put(url, payload, content_type, config)` - Perform HTTP/HTTPS PUT request
-- `Network::Delete(url, config)` - Perform HTTP/HTTPS DELETE request
+// These requests will be automatically rate-limited
+for (int i = 0; i < 5; ++i) {
+    auto response = Network::Get("https://postman-echo.com/get", config);
+    std::cout << "Request " << i + 1 << " status: " << response.status_code << "\n";
+}
+```
 
-### Configuration Options
-- `timeout_seconds` - Request timeout in seconds
-- `follow_redirects` - Whether to follow HTTP redirects
-- `max_redirects` - Maximum number of redirects to follow
-- `additional_headers` - Custom HTTP headers
+### Different HTTP Methods Example
 
-## Contribution
-Contributions are welcome! Please fork the repository, create a new branch, and submit a pull request.
+```cpp
+// GET request
+auto get_response = Network::Get("https://httpbin.org/get");
+
+// POST request with JSON
+auto post_response = Network::Post(
+    "https://httpbin.org/post",
+    "{\"name\": \"test\", \"value\": 123}",
+    "application/json"
+);
+
+// PUT request
+auto put_response = Network::Put(
+    "https://httpbin.org/put",
+    "updated_data=hello",
+    "application/x-www-form-urlencoded"
+);
+
+// DELETE request
+auto delete_response = Network::Delete("https://httpbin.org/delete");
+
+// PATCH request
+Network::RequestConfig config;
+config.additional_headers["Content-Type"] = "application/json";
+auto patch_response = Network::Request(
+    Network::Method::HTTP_PATCH,
+    "https://httpbin.org/patch",
+    "{\"updated\": true}"
+);
+```
+
+### Retry Mechanism Example
+
+```cpp
+Network::RequestConfig config;
+config.max_retries = 3;
+config.retry_delay_ms = 1000;
+
+// This will retry up to 3 times on 500 error
+auto response = Network::Get(
+    "https://httpbin.org/status/500",
+    config
+);
+
+std::cout << "Final status after retries: " << response.status_code << "\n";
+```
+
+### Large Payload Example
+
+```cpp
+// Get a large response (5000 bytes of random data)
+auto response = Network::Get("https://httpbin.org/bytes/5000");
+std::cout << "Received " << response.body.length() << " bytes\n";
+```
+
+## Testing
+
+The library comes with a comprehensive test suite that verifies:
+- Basic HTTP methods functionality
+- Security features (SSL/TLS)
+- Error handling
+- Performance characteristics
+- Retry mechanism
+- Rate limiting
+
+Run the tests:
+```bash
+./NetworkClient.exe
+```
+
+## Known Issues
+
+1. SSL Certificate Validation
+   - Some self-signed certificates may not be recognized
+   - Working on adding custom certificate support
+
+2. Domain Validation
+   - Certain special domain formats may not be properly validated
+   - Improvements planned for future releases
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## License
-This project is licensed under the MIT License - see the LICENSE file for details.
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Credits
+
+- Author: Jxint
+- Version: 1.1.0
+- Last Updated: December 2024
+
+## Support
+
+For support, please:
+1. Check the [Issues](https://github.com/JMJAJ/NetworkClient/issues) page
+2. Create a new issue if your problem isn't already listed
+3. Provide as much detail as possible about your environment and the issue
+
+## Roadmap
+
+Future improvements planned:
+- [ ] WebSocket support
+- [ ] HTTP/2 support
+- [ ] Async request handling
+- [ ] Custom certificate handling
+- [ ] Proxy support
+- [ ] Cookie management
+- [ ] Request/Response compression
+- [ ] Better timeout granularity
