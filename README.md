@@ -56,32 +56,44 @@ git clone https://github.com/JMJAJ/NetworkClient.git
 ## Quick Start
 
 ```cpp
-// Initialize the library
-if (!Network::Initialize()) {
-    std::cerr << "Failed to initialize network\n";
-    return 1;
+#include "Network.hpp"
+#include <iostream>
+
+int main() {
+
+    // Initialize the library
+    if (!Network::Initialize()) {
+        std::cerr << "Failed to initialize network\n";
+        return 1;
+    }
+
+    // Make a GET request
+    auto response_get = Network::Get("https://httpbin.org/get");
+    if (response_get.success) {
+        std::cout << "Response: " << response_get.body << "\n";
+    }
+
+    // Make a POST request with custom headers
+    Network::RequestConfig config;
+    config.additional_headers["Content-Type"] = "application/json";
+    config.timeout_seconds = 30;
+
+    auto response_post = Network::Post(
+        "https://postman-echo.com/post",
+        "{\"key\": \"value\"}",
+        "application/json",
+        config
+    );
+
+    if (response_post.success) {
+        std::cout << "Response: " << response_post.body << "\n";
+    }
+
+    // Cleanup
+    Network::Cleanup();
+
+    return 0;
 }
-
-// Make a GET request
-auto response = Network::Get("https://httpbin.org/get");
-if (response.success) {
-    std::cout << "Response: " << response.body << "\n";
-}
-
-// Make a POST request with custom headers
-Network::RequestConfig config;
-config.additional_headers["Content-Type"] = "application/json";
-config.timeout_seconds = 30;
-
-auto response = Network::Post(
-    "https://postman-echo.com/post",
-    "{\"key\": \"value\"}",
-    "application/json",
-    config
-);
-
-// Cleanup
-Network::Cleanup();
 ```
 
 ## Advanced Usage
