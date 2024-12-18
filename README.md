@@ -22,6 +22,8 @@ A modern C++ HTTP networking library built on Windows Internet (WinINet) API, pr
   - Timeout handling at multiple levels
   - Redirect following with max limit
   - URL encoding and Base64 encoding utilities
+  - Asynchronous request support
+  - HTTP/2 support
 
 - **Error Handling**
   - Detailed error messages
@@ -106,6 +108,7 @@ Network::RequestConfig config;
 // Security settings
 config.verify_ssl = true;
 config.use_tls12_or_higher = true;
+config.use_http2 = true;  // Enable HTTP/2 support
 
 // Retry settings
 config.max_retries = 3;
@@ -121,6 +124,54 @@ config.oauth_token = "your-oauth-token";
 // Custom headers
 config.additional_headers["User-Agent"] = "MyApp/1.0";
 config.additional_headers["Accept"] = "application/json";
+```
+
+### Asynchronous Requests
+
+```cpp
+// Async GET request
+Network::GetAsync("https://httpbin.org/get",
+    [](const Network::NetworkResponse& response) {
+        if (response.success) {
+            std::cout << "Async GET completed: " << response.body << "\n";
+        }
+    }
+);
+
+// Async POST request
+Network::RequestConfig config;
+config.timeout_seconds = 30;
+
+Network::PostAsync(
+    "https://httpbin.org/post",
+    "{\"key\": \"value\"}",
+    "application/json",
+    [](const Network::NetworkResponse& response) {
+        if (response.success) {
+            std::cout << "Async POST completed: " << response.body << "\n";
+        }
+    },
+    config
+);
+
+// Continue execution while requests are processing
+std::cout << "Requests are processing asynchronously...\n";
+```
+
+### HTTP/2 Example
+
+```cpp
+Network::RequestConfig config;
+config.use_http2 = true;  // Enable HTTP/2
+config.verify_ssl = true; // Required for HTTP/2
+
+// Make HTTP/2 request
+auto response = Network::Get("https://http2.github.io/", config);
+if (response.success) {
+    std::cout << "HTTP/2 Request successful!\n";
+    std::cout << "Protocol: " << response.headers["protocol"] << "\n";
+    std::cout << "Response size: " << response.body.size() << " bytes\n";
+}
 ```
 
 ### Error Handling
@@ -343,9 +394,9 @@ For support, please:
 ## Roadmap
 
 Future improvements planned:
-- [ ] WebSocket support
-- [*] HTTP/2 support
-- [ ] Async request handling
+- [ ] WebSocket support (beta)
+- [x] HTTP/2 support
+- [x] Async request handling
 - [ ] Custom certificate handling
 - [ ] Proxy support
 - [ ] Cookie management
