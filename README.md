@@ -191,22 +191,6 @@ if (response.success) {
 }
 ```
 
-### HTTP/2 Example
-
-```cpp
-Network::RequestConfig config;
-config.use_http2 = true;  // Enable HTTP/2
-config.verify_ssl = true; // Required for HTTP/2
-
-// Make HTTP/2 request
-auto response = Network::Get("https://http2.github.io/", config);
-if (response.success) {
-    std::cout << "HTTP/2 Request successful!\n";
-    std::cout << "Protocol: " << response.headers["protocol"] << "\n";
-    std::cout << "Response size: " << response.body.size() << " bytes\n";
-}
-```
-
 ### Error Handling
 
 ```cpp
