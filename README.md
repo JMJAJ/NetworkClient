@@ -344,7 +344,7 @@ For support, please:
 
 Future improvements planned:
 - [ ] WebSocket support
-- [#] HTTP/2 support
+- [*] HTTP/2 support
 - [ ] Async request handling
 - [ ] Custom certificate handling
 - [ ] Proxy support
