@@ -130,11 +130,13 @@ config.additional_headers["Accept"] = "application/json";
 
 ```cpp
 // Async GET request
+std::atomic<bool> get_completed{false};
 Network::GetAsync("https://httpbin.org/get",
-    [](const Network::NetworkResponse& response) {
+    [&get_completed](const Network::NetworkResponse& response) {
         if (response.success) {
             std::cout << "Async GET completed: " << response.body << "\n";
         }
+        get_completed = true;
     }
 );
 
@@ -142,20 +144,51 @@ Network::GetAsync("https://httpbin.org/get",
 Network::RequestConfig config;
 config.timeout_seconds = 30;
 
+std::atomic<bool> post_completed{false};
 Network::PostAsync(
     "https://httpbin.org/post",
     "{\"key\": \"value\"}",
     "application/json",
-    [](const Network::NetworkResponse& response) {
+    [&post_completed](const Network::NetworkResponse& response) {
         if (response.success) {
             std::cout << "Async POST completed: " << response.body << "\n";
         }
+        post_completed = true;
     },
     config
 );
 
 // Continue execution while requests are processing
 std::cout << "Requests are processing asynchronously...\n";
+
+// Wait for both requests to complete (with timeout)
+const int MAX_WAIT_SECONDS = 10;
+int waited_seconds = 0;
+while ((!get_completed || !post_completed) && waited_seconds < MAX_WAIT_SECONDS) {
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    waited_seconds++;
+    std::cout << "Waiting for requests to complete... " << waited_seconds << "s\n";
+}
+
+if (!get_completed || !post_completed) {
+    std::cout << "Some requests did not complete within timeout period.\n";
+}
+```
+
+### HTTP/2 Example
+
+```cpp
+Network::RequestConfig config;
+config.use_http2 = true;  // Enable HTTP/2
+config.verify_ssl = true; // Required for HTTP/2
+
+// Make HTTP/2 request
+auto response = Network::Get("https://http2.github.io/", config);
+if (response.success) {
+    std::cout << "HTTP/2 Request successful!\n";
+    std::cout << "Protocol: " << response.headers["protocol"] << "\n";
+    std::cout << "Response size: " << response.body.size() << " bytes\n";
+}
 ```
 
 ### HTTP/2 Example
