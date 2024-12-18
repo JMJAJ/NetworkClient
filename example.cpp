@@ -27,7 +27,7 @@
  * 4. Review performance metrics
  * 
  * @note This test suite requires internet connectivity and access to test endpoints
- * @version 1.0.0
+ * @version 1.1.0
  * @author Jxint
  * @date December 2024
  */
