@@ -40,9 +40,8 @@ config.api_key = getSecureApiKey(); // Get from secure storage
 
 If you discover a security vulnerability, please follow these steps:
 
-1. **Do Not** open a public issue
-2. Send a detailed report to [security@yourcompany.com]
-3. Include:
+1. **Open** a public issue
+2. Include:
    - Description of the vulnerability
    - Steps to reproduce
    - Potential impact
