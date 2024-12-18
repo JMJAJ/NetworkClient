@@ -3,7 +3,7 @@
  * @brief Implementation of the Network class
  * 
  * This file contains the implementation of the Network class methods,
- * providing HTTP communication capabilities using the WinINet API.
+ * providing HTTP communication capabilities using the WinHTTP API.
  */
 
 #include "Network.hpp"
@@ -11,64 +11,136 @@
 #include <sstream>
 #include <algorithm>
 #include <cctype>
-#include <wininet.h>
+#include <winhttp.h>
 #include <mutex>
-#include <chrono>
 #include <map>
 #include <string>
 #include <thread>
+#include <future>
+#include <chrono>
 
-#pragma comment(lib, "wininet.lib")
+#pragma comment(lib, "winhttp.lib")
 
-// Initialize static member
-HINTERNET Network::hInternet = NULL;
+// Define HTTP/2 flag if not available in older Windows SDK
+#ifndef WINHTTP_FLAG_HTTP2
+#define WINHTTP_FLAG_HTTP2 0x00000020
+#endif
+
+// Define TLS 1.2 flag if not available
+#ifndef WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2
+#define WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 0x00000800
+#endif
+
+// Initialize static members
+HINTERNET Network::hSession = NULL;
+std::mutex Network::sessionMutex;
+std::mutex Network::requestMutex;
+std::mutex Network::rateLimitMutex;
+std::map<std::string, Network::RateLimitInfo> Network::rateLimitMap;
 
 /**
- * @brief Initializes the WinINet API
+ * @brief Initializes the WinHTTP API
  * 
- * This method initializes the WinINet API with default browser settings.
+ * This method initializes the WinHTTP API with default browser settings.
  * 
  * @return true if initialization is successful, false otherwise
  */
 bool Network::Initialize() {
-    if (hInternet) {
+    std::lock_guard<std::mutex> lock(sessionMutex);
+    
+    if (hSession) {
         return true;  // Already initialized
     }
 
-    // Initialize WinINet with default browser settings
-    hInternet = InternetOpenW(
-        L"Mozilla/5.0",
-        INTERNET_OPEN_TYPE_PRECONFIG,  // Use system's internet settings
-        NULL,
-        NULL,
-        0
+    // Initialize WinHTTP with default browser settings
+    hSession = WinHttpOpen(
+        L"Network Library/1.0",
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        WINHTTP_NO_PROXY_NAME,
+        WINHTTP_NO_PROXY_BYPASS,
+        WINHTTP_FLAG_ASYNC  // Enable async for connection pooling
     );
 
-    if (!hInternet) {
+    if (!hSession) {
         DWORD error = GetLastError();
         printf("[Network] Failed to initialize. Error code: %lu\n", error);
         return false;
     }
 
-    // Set default timeouts for better responsiveness
-    DWORD timeout = 5000;  // 5 seconds
-    InternetSetOptionW(hInternet, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
-    InternetSetOptionW(hInternet, INTERNET_OPTION_SEND_TIMEOUT, &timeout, sizeof(timeout));
-    InternetSetOptionW(hInternet, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
+    // Configure connection pooling
+    DWORD maxConnections = 128;  // Maximum number of connections in the pool
+    WinHttpSetOption(hSession, WINHTTP_OPTION_MAX_CONNS_PER_SERVER, &maxConnections, sizeof(maxConnections));
+
+    // Configure default timeouts (in milliseconds)
+    DWORD resolveTimeout = 15000;   // DNS resolution timeout
+    DWORD connectTimeout = 30000;   // Connection timeout
+    DWORD sendTimeout = 30000;      // Send timeout
+    DWORD receiveTimeout = 30000;   // Receive timeout
+
+    WinHttpSetTimeouts(hSession, resolveTimeout, connectTimeout, sendTimeout, receiveTimeout);
 
     return true;
 }
 
 /**
- * @brief Cleans up the WinINet API
+ * @brief Cleans up the WinHTTP API
  * 
- * This method closes the WinINet handle and sets it to NULL.
+ * This method closes the WinHTTP handle and sets it to NULL.
  */
 void Network::Cleanup() {
-    if (hInternet) {
-        InternetCloseHandle(hInternet);
-        hInternet = NULL;
+    std::lock_guard<std::mutex> lock(sessionMutex);
+    
+    if (hSession) {
+        WinHttpCloseHandle(hSession);
+        hSession = NULL;
     }
+}
+
+/**
+ * @brief Applies rate limiting for a given host
+ * 
+ * This method checks if the rate limit for a given host has been exceeded.
+ * 
+ * @param host The host to check the rate limit for
+ * @param rateLimit The rate limit per minute
+ * @return true if the rate limit has not been exceeded, false otherwise
+ */
+bool Network::ApplyRateLimit(const std::string& host, int rateLimit) {
+    if (rateLimit <= 0) {
+        return true;  // Rate limiting disabled
+    }
+
+    std::lock_guard<std::mutex> lock(rateLimitMutex);
+    auto now = std::chrono::steady_clock::now();
+    auto& info = rateLimitMap[host];
+
+    // If this is the first request, initialize
+    if (info.requestCount == 0) {
+        info.lastRequest = now;
+        info.requestCount = 1;
+        return true;
+    }
+
+    // Calculate time since window start
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - info.lastRequest).count();
+    
+    // If window has passed, reset counter
+    if (elapsed >= 60000) {  // 60 seconds = 1 minute
+        info.lastRequest = now;
+        info.requestCount = 1;
+        return true;
+    }
+
+    // Check if we've exceeded rate limit
+    if (info.requestCount >= rateLimit) {
+        // Calculate remaining time in window
+        auto remainingTime = 60000 - elapsed;
+        return false;  // Rate limit exceeded
+    }
+
+    // Increment counter and allow request
+    info.requestCount++;
+    return true;
 }
 
 /**
@@ -89,401 +161,264 @@ Network::NetworkResponse Network::Request(
     const std::optional<std::string>& payload,
     const RequestConfig& config
 ) {
+    std::lock_guard<std::mutex> lock(requestMutex);
     NetworkResponse response;
+    
+    // Parse URL
     std::string protocol, host, path;
     int port;
-
-    // Parse and validate URL
     if (!ParseUrl(url, protocol, host, path, port)) {
         response.success = false;
         response.error_message = "Invalid URL";
         return response;
     }
 
-    // Validate protocol
-    if (protocol != "http" && protocol != "https") {
-        response.error_message = "Invalid protocol: " + protocol;
+    // Apply rate limiting
+    if (config.rate_limit_per_minute > 0 && !ApplyRateLimit(host, config.rate_limit_per_minute)) {
+        response.success = false;
+        response.error_message = "Rate limit exceeded for host: " + host + ". Please wait before retrying.";
+        response.status_code = 429;  // HTTP 429 Too Many Requests
         return response;
     }
 
-    // Validate port range (1-65535)
-    if (port <= 0 || port > 65535) {
-        response.error_message = "Invalid port number";
-        return response;
-    }
-
-    // Convert strings to wide strings for WinINet
+    // Convert strings to wide strings
     std::wstring whost(host.begin(), host.end());
     std::wstring wpath(path.begin(), path.end());
 
-    // Set up SSL/TLS flags
-    DWORD flags = (protocol == "https") ?
-        (INTERNET_FLAG_SECURE |
-            INTERNET_FLAG_IGNORE_CERT_CN_INVALID |
-            INTERNET_FLAG_IGNORE_CERT_DATE_INVALID |
-            INTERNET_FLAG_NO_CACHE_WRITE) : 0;
-
-    // Connect to server
-    HINTERNET hConnect = InternetConnectW(
-        hInternet,
+    // Create connection handle with connection pooling
+    HINTERNET hConnect = WinHttpConnect(
+        hSession,
         whost.c_str(),
         static_cast<WORD>(port),
-        NULL,
-        NULL,
-        INTERNET_SERVICE_HTTP,
-        0,
         0
     );
 
     if (!hConnect) {
-        DWORD error = GetLastError();
-        char errorMsg[256];
-        sprintf_s(errorMsg, "Failed to connect to server. Error code: %lu", error);
-        response.error_message = errorMsg;
+        response.error_message = "Failed to connect";
         return response;
     }
 
-    // Configure SSL/TLS security
-    DWORD securityFlags = 0;
+    // Create request handle
+    LPCWSTR pwszVerb = nullptr;
+    switch (method) {
+        case Method::HTTP_GET:    pwszVerb = L"GET"; break;
+        case Method::HTTP_POST:   pwszVerb = L"POST"; break;
+        case Method::HTTP_PUT:    pwszVerb = L"PUT"; break;
+        case Method::HTTP_DELETE: pwszVerb = L"DELETE"; break;
+        default:                  pwszVerb = L"GET"; break;
+    }
+
+    DWORD flags = WINHTTP_FLAG_REFRESH;
     if (protocol == "https") {
-        securityFlags = INTERNET_FLAG_SECURE;
-        if (config.verify_ssl) {
-            // Strict SSL mode
-            securityFlags |= INTERNET_FLAG_IGNORE_REDIRECT_TO_HTTP;
-        } else {
-            // Relaxed SSL mode
-            securityFlags |= INTERNET_FLAG_IGNORE_CERT_CN_INVALID |
-                           INTERNET_FLAG_IGNORE_CERT_DATE_INVALID;
-        }
+        flags |= WINHTTP_FLAG_SECURE;
     }
 
-    // Set up timeouts for better responsiveness
+    // Add timeout flag if timeout is configured
     if (config.timeout_seconds > 0) {
-        DWORD timeout = (config.timeout_seconds * 1000 > 1000) ? 1000 : config.timeout_seconds * 1000;
-        DWORD resolveTimeout = 250;  // DNS timeout
-        DWORD connectTimeout = 500;  // Connect timeout
-        
-        // Set timeouts at all levels
-        InternetSetOptionW(hInternet, INTERNET_OPTION_CONNECT_TIMEOUT, &resolveTimeout, sizeof(resolveTimeout));
-        InternetSetOptionW(hInternet, INTERNET_OPTION_SEND_TIMEOUT, &timeout, sizeof(timeout));
-        InternetSetOptionW(hInternet, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
-        InternetSetOptionW(hInternet, INTERNET_OPTION_DATA_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
-        InternetSetOptionW(hInternet, INTERNET_OPTION_DATA_SEND_TIMEOUT, &timeout, sizeof(timeout));
-        
-        InternetSetOptionW(hConnect, INTERNET_OPTION_CONNECT_TIMEOUT, &connectTimeout, sizeof(connectTimeout));
-        InternetSetOptionW(hConnect, INTERNET_OPTION_SEND_TIMEOUT, &timeout, sizeof(timeout));
-        InternetSetOptionW(hConnect, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
-        InternetSetOptionW(hConnect, INTERNET_OPTION_DATA_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
-        InternetSetOptionW(hConnect, INTERNET_OPTION_DATA_SEND_TIMEOUT, &timeout, sizeof(timeout));
-        
-        // Add flags for faster timeout handling
-        securityFlags |= INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_PRAGMA_NOCACHE | 
-                        INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_COOKIES | INTERNET_FLAG_NO_AUTH |
-                        INTERNET_FLAG_NO_UI | INTERNET_FLAG_DONT_CACHE;
+        flags |= WINHTTP_FLAG_REFRESH;  // Force refresh to ensure timeout works
     }
 
-    // Improved rate limiting with precise timing
-    if (config.rate_limit_per_minute > 0) {
-        static std::mutex rateLimitMutex;
-        static std::map<std::string, std::chrono::steady_clock::time_point> lastRequestTime;
-        
-        const int minTimeBetweenRequests = (60 * 1000) / config.rate_limit_per_minute;
-        
-        std::lock_guard<std::mutex> lock(rateLimitMutex);
-        auto now = std::chrono::steady_clock::now();
-        
-        auto it = lastRequestTime.find(url);
-        if (it != lastRequestTime.end()) {
-            auto timeSinceLastRequest = std::chrono::duration_cast<std::chrono::milliseconds>(
-                now - it->second).count();
-            
-            if (timeSinceLastRequest < minTimeBetweenRequests) {
-                auto sleepTime = minTimeBetweenRequests - timeSinceLastRequest;
-                std::this_thread::sleep_for(std::chrono::milliseconds(sleepTime));
-                now = std::chrono::steady_clock::now(); // Update current time after sleep
-            }
-        }
-        
-        lastRequestTime[url] = now;
+    HINTERNET hRequest = WinHttpOpenRequest(
+        hConnect,
+        pwszVerb,
+        wpath.c_str(),
+        NULL,
+        WINHTTP_NO_REFERER,
+        WINHTTP_DEFAULT_ACCEPT_TYPES,
+        flags
+    );
+
+    if (!hRequest) {
+        WinHttpCloseHandle(hConnect);
+        response.error_message = "Failed to create request";
+        return response;
     }
 
-    // Error handling with better timeout detection
-    response.success = false;
+    // Set timeouts
+    if (config.timeout_seconds > 0) {
+        DWORD timeout = config.timeout_seconds * 1000;
+        DWORD resolveTimeout = (timeout / 4 > 15000) ? 15000 : timeout / 4;  // Max 15s for DNS
+        DWORD connectTimeout = (timeout / 2 > 30000) ? 30000 : timeout / 2;  // Max 30s for connect
+        DWORD sendTimeout = timeout;
+        DWORD receiveTimeout = timeout;
+
+        WinHttpSetTimeouts(hRequest, resolveTimeout, connectTimeout, sendTimeout, receiveTimeout);
+
+        // Set additional timeout options
+        DWORD option = WINHTTP_OPTION_CONNECT_RETRIES;
+        DWORD retries = 3;
+        WinHttpSetOption(hRequest, option, &retries, sizeof(retries));
+    }
+
+    // Add custom headers
+    std::wstring headers;
+    for (const auto& [key, value] : config.additional_headers) {
+        headers += std::wstring(key.begin(), key.end()) + L": " +
+                  std::wstring(value.begin(), value.end()) + L"\r\n";
+    }
     
-    try {
-        // Add authentication headers if provided
-        auto headers = config.additional_headers;  // Create a local copy
-        if (!config.api_key.empty()) {
-            headers["Authorization"] = "Bearer " + config.api_key;
-        }
-        if (!config.oauth_token.empty()) {
-            headers["Authorization"] = "Bearer " + config.oauth_token;
-        }
-
-        // Convert method to string
-        std::string method_str;
-        switch (method) {
-        case Method::HTTP_GET: method_str = "GET"; break;
-        case Method::HTTP_POST: method_str = "POST"; break;
-        case Method::HTTP_PUT: method_str = "PUT"; break;
-        case Method::HTTP_PATCH: method_str = "PATCH"; break;
-        case Method::HTTP_DELETE: method_str = "DELETE"; break;
-        default: method_str = "GET";
-        }
-
-        // Create the request with all flags
-        HINTERNET hRequest = HttpOpenRequestW(
-            hConnect,
-            std::wstring(method_str.begin(), method_str.end()).c_str(),
-            wpath.c_str(),
-            NULL,
-            NULL,
-            NULL,
-            securityFlags,
-            0
+    if (!headers.empty()) {
+        WinHttpAddRequestHeaders(
+            hRequest,
+            headers.c_str(),
+            static_cast<DWORD>(-1L),
+            WINHTTP_ADDREQ_FLAG_ADD
         );
+    }
 
-        if (!hRequest) {
-            DWORD error = GetLastError();
-            switch (error) {
-                case ERROR_INTERNET_TIMEOUT:
-                    response.error_message = "Connection timed out";
-                    break;
-                case ERROR_INTERNET_INVALID_CA:
-                case ERROR_INTERNET_SEC_CERT_CN_INVALID:
-                case ERROR_INTERNET_SEC_CERT_DATE_INVALID:
-                    response.error_message = "SSL certificate validation failed";
-                    break;
-                case ERROR_INTERNET_NAME_NOT_RESOLVED:
-                    response.error_message = "Could not resolve domain name";
-                    break;
-                default:
-                    response.error_message = "Failed to create request";
-            }
-            return response;
-        }
+    // Send request
+    BOOL bResults = WinHttpSendRequest(
+        hRequest,
+        WINHTTP_NO_ADDITIONAL_HEADERS,
+        0,
+        payload ? const_cast<LPVOID>(static_cast<LPCVOID>(payload->c_str())) : WINHTTP_NO_REQUEST_DATA,
+        payload ? static_cast<DWORD>(payload->size()) : 0,
+        payload ? static_cast<DWORD>(payload->size()) : 0,
+        0
+    );
 
-        // Set request timeout and buffer sizes
-        if (config.timeout_seconds > 0) {
-            // Set aggressive timeouts at 80% of the requested timeout
-            DWORD timeout = static_cast<DWORD>(config.timeout_seconds * 800);  // 80% of timeout in milliseconds
-            InternetSetOptionW(hInternet, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
-            InternetSetOptionW(hInternet, INTERNET_OPTION_SEND_TIMEOUT, &timeout, sizeof(timeout));
-            InternetSetOptionW(hInternet, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
-            
-            // Set even stricter timeouts for the request itself
-            DWORD requestTimeout = static_cast<DWORD>(config.timeout_seconds * 600);  // 60% of timeout
-            InternetSetOptionW(hRequest, INTERNET_OPTION_CONNECT_TIMEOUT, &requestTimeout, sizeof(requestTimeout));
-            InternetSetOptionW(hRequest, INTERNET_OPTION_SEND_TIMEOUT, &requestTimeout, sizeof(requestTimeout));
-            InternetSetOptionW(hRequest, INTERNET_OPTION_RECEIVE_TIMEOUT, &requestTimeout, sizeof(requestTimeout));
-            
-            // Add flags for better timeout control
-            securityFlags |= INTERNET_FLAG_NO_CACHE_WRITE | 
-                           INTERNET_FLAG_PRAGMA_NOCACHE | 
-                           INTERNET_FLAG_RELOAD |
-                           INTERNET_FLAG_NO_COOKIES;
-            
-            // Set up async operation for better timeout control
-            INTERNET_BUFFERS BufferIn = { sizeof(INTERNET_BUFFERS) };
-            if (!HttpSendRequestEx(hRequest, &BufferIn, NULL, HSR_INITIATE | HSR_SYNC, 0)) {
-                response.error_message = "Failed to initiate request";
-                return response;
-            }
-            
-            // Set up manual timeout using a separate thread
-            std::atomic<bool> requestCompleted{false};
-            std::thread timeoutThread([&]() {
-                std::this_thread::sleep_for(std::chrono::milliseconds(timeout));
-                if (!requestCompleted.load()) {
-                    InternetCloseHandle(hRequest);
-                    response.error_message = "Request timed out";
-                }
-            });
-            timeoutThread.detach();
-        }
+    if (bResults) {
+        bResults = WinHttpReceiveResponse(hRequest, NULL);
+    }
 
-        // Add headers
-        std::string headers_str;
-        for (const auto& header : headers) {
-            headers_str += header.first + ": " + header.second + "\r\n";
-        }
-
-        if (!headers_str.empty()) {
-            HttpAddRequestHeadersW(
-                hRequest,
-                std::wstring(headers_str.begin(), headers_str.end()).c_str(),
-                -1,
-                HTTP_ADDREQ_FLAG_ADD
-            );
-        }
-
-        // Send request with timeout detection
-        auto requestStart = std::chrono::steady_clock::now();
-        BOOL success = HttpSendRequestW(hRequest, NULL, 0, 
-            payload ? (LPVOID)payload->c_str() : NULL,
-            payload ? payload->length() : 0
-        );
-
-        // Check for timeout or other errors
-        if (!success) {
-            DWORD error = GetLastError();
-            if (error == ERROR_INTERNET_TIMEOUT) {
+    if (!bResults) {
+        DWORD error = GetLastError();
+        switch (error) {
+            case ERROR_WINHTTP_TIMEOUT:
                 response.error_message = "Request timed out";
-            } else if (error == ERROR_INTERNET_INVALID_CA || 
-                      error == ERROR_INTERNET_SEC_CERT_CN_INVALID ||
-                      error == ERROR_INTERNET_SEC_CERT_DATE_INVALID) {
-                response.error_message = "SSL certificate validation failed";
-            } else {
-                response.error_message = "Failed to send request";
-            }
-            InternetCloseHandle(hRequest);
-            return response;
-        }
-
-        // Get status code
-        DWORD statusCode = 0;
-        DWORD size = sizeof(statusCode);
-        if (!HttpQueryInfoW(hRequest, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER,
-                          &statusCode, &size, NULL)) {
-            response.error_message = "Failed to get status code";
-            InternetCloseHandle(hRequest);
-            return response;
-        }
-        
-        response.status_code = statusCode;
-
-        // Handle server errors with retry
-        if (statusCode >= 500 && config.max_retries > 0) {
-            InternetCloseHandle(hRequest);
-            
-            for (int retryCount = 0; retryCount < config.max_retries; retryCount++) {
-                // Wait for the configured delay between retries
-                if (config.retry_delay_ms > 0) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(config.retry_delay_ms));
-                } else {
-                    // Default exponential backoff if no delay configured
-                    int baseDelay = 100 * (1 << retryCount);
-                    int delayMs = (baseDelay > 1000) ? 1000 : baseDelay;  // Cap at 1 second
-                    std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
-                }
-                
-                // Create new request for retry
-                hRequest = HttpOpenRequestW(
-                    hConnect,
-                    std::wstring(method_str.begin(), method_str.end()).c_str(),
-                    wpath.c_str(),
-                    NULL,
-                    NULL,
-                    NULL,
-                    securityFlags,
-                    0
-                );
-                
-                if (!hRequest) {
-                    response.error_message = "Failed to create request for retry";
-                    continue;
-                }
-                
-                // Add headers again for retry
-                if (!headers_str.empty()) {
-                    HttpAddRequestHeadersW(
-                        hRequest,
-                        std::wstring(headers_str.begin(), headers_str.end()).c_str(),
-                        -1,
-                        HTTP_ADDREQ_FLAG_ADD
-                    );
-                }
-                
-                // Retry the request
-                success = HttpSendRequestW(hRequest, NULL, 0,
-                    payload ? (LPVOID)payload->c_str() : NULL,
-                    payload ? payload->length() : 0
-                );
-                
-                if (!success) {
-                    InternetCloseHandle(hRequest);
-                    continue;
-                }
-                
-                // Check new status code
-                if (!HttpQueryInfoW(hRequest, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER,
-                                  &statusCode, &size, NULL)) {
-                    InternetCloseHandle(hRequest);
-                    continue;
-                }
-                
-                // If status code is now good, break out of retry loop
-                if (statusCode < 500) {
-                    response.status_code = statusCode;
-                    break;
-                }
-                
-                // Close request handle before next retry
-                InternetCloseHandle(hRequest);
-            }
-            
-            // If we exhausted all retries, set final error
-            if (statusCode >= 500) {
-                response.error_message = "Server error (status " + std::to_string(statusCode) + ")";
-                return response;
-            }
-        }
-
-        // Read response with timeout check
-        const int maxBufferSize = 8 * 1024; // 8KB chunks for faster timeout detection
-        char buffer[maxBufferSize];
-        DWORD bytesRead = 0;
-        std::string responseData;
-        responseData.reserve(64 * 1024); // Pre-allocate 64KB
-        
-        auto readStart = std::chrono::steady_clock::now();
-        bool timedOut = false;
-        
-        while (InternetReadFile(hRequest, buffer, maxBufferSize, &bytesRead)) {
-            if (bytesRead == 0) break;
-            
-            // Check if we've exceeded the timeout
-            auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - readStart).count();
-            if (config.timeout_seconds > 0 && elapsed > config.timeout_seconds * 1000) {
-                timedOut = true;
                 break;
-            }
+            case ERROR_WINHTTP_NAME_NOT_RESOLVED:
+                response.error_message = "DNS name resolution failed";
+                break;
+            case ERROR_WINHTTP_CANNOT_CONNECT:
+                response.error_message = "Failed to connect to server";
+                break;
+            case ERROR_WINHTTP_CONNECTION_ERROR:
+                response.error_message = "Connection was terminated";
+                break;
+            default:
+                char errorMsg[256];
+                sprintf_s(errorMsg, "Request failed with error code: %lu", error);
+                response.error_message = errorMsg;
+        }
+        response.success = false;
+        response.status_code = 0;
+        
+        WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect);
+        return response;
+    }
+
+    // Get status code
+    DWORD statusCode = 0;
+    DWORD size = sizeof(DWORD);
+    WinHttpQueryHeaders(
+        hRequest,
+        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX,
+        &statusCode,
+        &size,
+        WINHTTP_NO_HEADER_INDEX
+    );
+    response.status_code = statusCode;
+
+    // Get headers
+    DWORD headerSize = 0;
+    WinHttpQueryHeaders(
+        hRequest,
+        WINHTTP_QUERY_RAW_HEADERS_CRLF,
+        WINHTTP_HEADER_NAME_BY_INDEX,
+        NULL,
+        &headerSize,
+        WINHTTP_NO_HEADER_INDEX
+    );
+
+    if (GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+        std::vector<wchar_t> headerBuffer(headerSize / sizeof(wchar_t));
+        WinHttpQueryHeaders(
+            hRequest,
+            WINHTTP_QUERY_RAW_HEADERS_CRLF,
+            WINHTTP_HEADER_NAME_BY_INDEX,
+            headerBuffer.data(),
+            &headerSize,
+            WINHTTP_NO_HEADER_INDEX
+        );
+
+        std::wstring headerStr(headerBuffer.data());
+        std::wistringstream headerStream(headerStr);
+        std::wstring line;
+
+        while (std::getline(headerStream, line)) {
+            if (line.empty() || line == L"\r") continue;
             
-            responseData.append(buffer, bytesRead);
+            size_t colonPos = line.find(L':');
+            if (colonPos != std::wstring::npos) {
+                std::wstring key = line.substr(0, colonPos);
+                std::wstring value = line.substr(colonPos + 2); // Skip ": "
+                if (!value.empty() && value.back() == L'\r') {
+                    value.pop_back(); // Remove trailing \r
+                }
                 
-            // Add a small delay between reads to allow timeout to trigger
-            if (config.timeout_seconds > 0) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                // Convert to narrow string
+                std::string keyStr(key.begin(), key.end());
+                std::string valueStr(value.begin(), value.end());
+                response.headers[keyStr] = valueStr;
             }
         }
-        
-        if (timedOut) {
-            response.error_message = "Request timed out";
-            InternetCloseHandle(hRequest);
-            return response;
+    }
+
+    // Get response body
+    std::string responseBody;
+    DWORD bytesAvailable;
+    do {
+        bytesAvailable = 0;
+        if (!WinHttpQueryDataAvailable(hRequest, &bytesAvailable)) {
+            break;
         }
 
-        response.body = responseData;
-        response.success = (statusCode >= 200 && statusCode < 300);
-        
-        if (!response.success) {
-            if (statusCode >= 500) {
-                response.error_message = "Server error (status " + std::to_string(statusCode) + ")";
-            } else if (statusCode >= 400) {
-                response.error_message = "Client error (status " + std::to_string(statusCode) + ")";
-            }
+        if (bytesAvailable == 0) {
+            break;
         }
-        
-        InternetCloseHandle(hRequest);
-        
-    } catch (const std::exception& e) {
-        response.error_message = e.what();
-    }
+
+        std::vector<char> buffer(bytesAvailable);
+        DWORD bytesRead = 0;
+        if (WinHttpReadData(hRequest, buffer.data(), bytesAvailable, &bytesRead)) {
+            responseBody.append(buffer.data(), bytesRead);
+        }
+    } while (bytesAvailable > 0);
+
+    response.body = responseBody;
+    response.success = (statusCode >= 200 && statusCode < 300);
     
-    InternetCloseHandle(hConnect);
+    // Cleanup
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
 
     return response;
+}
+
+/**
+ * @brief Sends an asynchronous HTTP request
+ * 
+ * This method sends an asynchronous HTTP request to the specified URL with the given method,
+ * payload, and configuration.
+ * 
+ * @param method The HTTP method to use (e.g. GET, POST, PUT, DELETE)
+ * @param url The URL to send the request to
+ * @param callback The callback function to call with the response
+ * @param payload The payload to send with the request (optional)
+ * @param config The request configuration
+ */
+void Network::RequestAsync(Method method, const std::string& url,
+    std::function<void(NetworkResponse)> callback,
+    const std::optional<std::string>& payload, const RequestConfig& config) {
+    
+    std::thread([=]() {
+        RequestConfig asyncConfig = config;
+        asyncConfig.async_request = false;  // Prevent recursive async calls
+        NetworkResponse response = Request(method, url, payload, asyncConfig);
+        callback(response);
+    }).detach();
 }
 
 /**
@@ -497,6 +432,21 @@ Network::NetworkResponse Network::Request(
  */
 Network::NetworkResponse Network::Get(const std::string& url, const RequestConfig& config) {
     return Request(Method::HTTP_GET, url, std::nullopt, config);
+}
+
+/**
+ * @brief Sends an asynchronous GET request
+ * 
+ * This method sends an asynchronous GET request to the specified URL with the given configuration.
+ * 
+ * @param url The URL to send the request to
+ * @param callback The callback function to call with the response
+ * @param config The request configuration
+ */
+void Network::GetAsync(const std::string& url,
+    std::function<void(NetworkResponse)> callback,
+    const RequestConfig& config) {
+    RequestAsync(Method::HTTP_GET, url, callback, std::nullopt, config);
 }
 
 /**
@@ -520,6 +470,29 @@ Network::NetworkResponse Network::Post(
     RequestConfig cfg = config;
     cfg.additional_headers["Content-Type"] = content_type;
     return Request(Method::HTTP_POST, url, payload, cfg);
+}
+
+/**
+ * @brief Sends an asynchronous POST request
+ * 
+ * This method sends an asynchronous POST request to the specified URL with the given payload,
+ * content type, and configuration.
+ * 
+ * @param url The URL to send the request to
+ * @param payload The payload to send with the request
+ * @param content_type The content type of the payload
+ * @param callback The callback function to call with the response
+ * @param config The request configuration
+ */
+void Network::PostAsync(const std::string& url,
+    const std::string& payload,
+    const std::string& content_type,
+    std::function<void(NetworkResponse)> callback,
+    const RequestConfig& config) {
+    
+    RequestConfig asyncConfig = config;
+    asyncConfig.additional_headers["Content-Type"] = content_type;
+    RequestAsync(Method::HTTP_POST, url, callback, payload, asyncConfig);
 }
 
 /**

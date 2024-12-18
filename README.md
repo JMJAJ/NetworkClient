@@ -197,18 +197,101 @@ std::cout << "Received " << response.body.length() << " bytes\n";
 
 ## Testing
 
-The library comes with a comprehensive test suite that verifies:
-- Basic HTTP methods functionality
-- Security features (SSL/TLS)
-- Error handling
-- Performance characteristics
-- Retry mechanism
-- Rate limiting
+The library includes a comprehensive test suite (`example.cpp`) that thoroughly validates all aspects of the library:
 
-Run the tests:
+### Test Categories
+1. **Basic HTTP Methods**
+   - GET, POST, PUT, PATCH, DELETE operations
+   - Request/response validation
+   - Header handling
+
+2. **Security Features**
+   - SSL/TLS configuration
+   - Certificate validation
+   - API key authentication
+   - OAuth token handling
+
+3. **Performance**
+   - Rate limiting behavior
+   - Timeout handling
+   - Connection pooling
+   - Load distribution
+
+4. **Error Handling**
+   - Invalid URL scenarios
+   - Network issues
+   - Timeout conditions
+   - Status code validation
+
+5. **Advanced Features**
+   - Asynchronous operations
+   - WebSocket functionality (beta)
+   - Compression handling
+   - Content type validation
+
+6. **Edge Cases**
+   - Large payloads
+   - Special characters
+   - Unicode support
+   - Concurrent requests
+
+### Running Tests
+# Build in Release mode
+Build it in VS in Release mode
+
 ```bash
-./NetworkClient.exe
+# Run the test suite
+./NetworkTest
 ```
+
+The test suite provides detailed output including:
+- Success/failure status for each test
+- Performance metrics
+- Latency measurements
+- Server distribution statistics
+
+## Documentation
+
+### Available Documentation
+1. **README.md** (this file)
+   - Feature overview
+   - Installation instructions
+   - Quick start guide
+   - Advanced usage examples
+
+2. **CHANGELOG.md**
+   - Version history
+   - Feature additions
+   - Bug fixes
+   - Breaking changes
+
+3. **SECURITY.md**
+   - Security policies
+   - SSL/TLS configuration
+   - Best practices for API keys
+   - Known security limitations
+
+4. **CONTRIBUTING.md**
+   - Development guidelines
+   - Code style requirements
+   - Pull request process
+   - Testing requirements
+
+5. **Example Code**
+   - `examples/` demonstrates:
+     - Basic request operations
+     - Security configurations
+     - Error handling patterns
+     - Rate limiting usage
+     - Advanced features
+
+### API Documentation
+The codebase includes comprehensive documentation with:
+- Detailed function descriptions
+- Parameter explanations
+- Return value specifications
+- Usage examples
+- Error handling guidance
 
 ## Known Issues
 

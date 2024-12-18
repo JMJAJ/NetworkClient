@@ -14,6 +14,8 @@
  * - Timeout handling at multiple levels
  * - Custom header support
  * - Authentication support (API Key, OAuth)
+ * - Asynchronous request support
+ * - HTTP/2 support
  * 
  * @author Jxint
  * @date December 2024
@@ -26,6 +28,8 @@
 #include <map>
 #include <optional>
 #include <chrono>
+#include <functional>
+#include <mutex> // Added mutex header
 
 #ifdef _WIN32
 #include <windows.h>
@@ -67,6 +71,8 @@ public:
         std::string api_key;          ///< API key for authentication
         std::string oauth_token;      ///< OAuth token for authentication
         int rate_limit_per_minute = 0;///< Rate limiting (0 = disabled)
+        bool use_http2 = true;        ///< Use HTTP/2 if available
+        bool async_request = false;   ///< Make request asynchronously
     };
 
     /**
@@ -158,7 +164,49 @@ public:
         const RequestConfig& config = RequestConfig()
     );
 
-private:
+    /**
+     * @brief Make an asynchronous HTTP request
+     * @param method HTTP method to use
+     * @param url Target URL
+     * @param callback Callback function to handle the response
+     * @param payload Optional request body
+     * @param config Request configuration
+     */
+    static void RequestAsync(
+        Method method,
+        const std::string& url,
+        std::function<void(NetworkResponse)> callback,
+        const std::optional<std::string>& payload = std::nullopt,
+        const RequestConfig& config = RequestConfig()
+    );
+
+    /**
+     * @brief Make an asynchronous GET request
+     * @param url Target URL
+     * @param callback Callback function to handle the response
+     * @param config Request configuration
+     */
+    static void GetAsync(
+        const std::string& url,
+        std::function<void(NetworkResponse)> callback,
+        const RequestConfig& config = RequestConfig()
+    );
+
+    /**
+     * @brief Make an asynchronous POST request
+     * @param url Target URL
+     * @param payload Request body
+     * @param content_type Content type of the payload
+     * @param callback Callback function to handle the response
+     * @param config Request configuration
+     */
+    static void PostAsync(
+        const std::string& url,
+        const std::string& payload,
+        const std::string& content_type,
+        std::function<void(NetworkResponse)> callback,
+        const RequestConfig& config = RequestConfig()
+    );
     /**
      * @brief URL encode a string
      * @param input String to encode
@@ -173,6 +221,7 @@ private:
      */
     static std::string Base64Encode(const std::string& input);
 
+private:
     /**
      * @brief Parse a URL into its components
      * @param url URL to parse
@@ -190,7 +239,25 @@ private:
         int& port
     );
     
-    static HINTERNET hInternet; ///< Global WinINet handle
+    static HINTERNET hSession;        ///< Global WinHTTP session handle
+    static std::mutex sessionMutex;   ///< Mutex for session handle access
+    static std::mutex requestMutex;   ///< Mutex for request synchronization
+    
+    // Rate limiting support
+    struct RateLimitInfo {
+        std::chrono::steady_clock::time_point lastRequest;
+        int requestCount;
+    };
+    static std::map<std::string, RateLimitInfo> rateLimitMap;  ///< Rate limit tracking per host
+    static std::mutex rateLimitMutex;  ///< Mutex for rate limit map access
+
+    /**
+     * @brief Applies rate limiting for a host
+     * @param host The host to rate limit
+     * @param rateLimit The maximum number of requests per minute
+     * @return true if request can proceed, false if rate limit exceeded
+     */
+    static bool ApplyRateLimit(const std::string& host, int rateLimit);
 };
 
 #endif // NETWORK_HPP
