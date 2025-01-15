@@ -1,11 +1,11 @@
 /**
  * @file Network.hpp
  * @brief HTTP Network Communication Library using WinINet
- * 
+ *
  * This library provides a modern C++ wrapper around the Windows Internet (WinINet) API,
  * offering a simple interface for making HTTP/HTTPS requests while handling common
  * scenarios like SSL, timeouts, retries, and rate limiting.
- * 
+ *
  * Features:
  * - Support for all major HTTP methods (GET, POST, PUT, PATCH, DELETE)
  * - SSL/TLS support with certificate validation
@@ -16,7 +16,7 @@
  * - Authentication support (API Key, OAuth)
  * - Asynchronous request support
  * - HTTP/2 support
- * 
+ *
  * @author Jxint
  * @date December 2024
  */
@@ -29,7 +29,7 @@
 #include <optional>
 #include <chrono>
 #include <functional>
-#include <mutex> // Added mutex header
+#include <mutex>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -37,53 +37,53 @@
 #pragma comment(lib, "wininet.lib")
 #endif
 
-/**
- * @brief Main networking class providing HTTP communication capabilities
- * 
- * This class provides a static interface for making HTTP requests using WinINet.
- * It handles connection management, request configuration, and response processing.
- */
+ /**
+  * @brief Main networking class providing HTTP communication capabilities
+  *
+  * This class provides a static interface for making HTTP requests using WinINet.
+  * It handles connection management, request configuration, and response processing.
+  */
 class Network {
 public:
     /**
      * @brief Supported HTTP methods
      */
     enum class Method {
-        HTTP_GET,    ///< HTTP GET method
-        HTTP_POST,   ///< HTTP POST method
-        HTTP_PUT,    ///< HTTP PUT method
-        HTTP_PATCH,  ///< HTTP PATCH method
-        HTTP_DELETE  ///< HTTP DELETE method
+        HTTP_GET,                                               ///< HTTP GET method
+        HTTP_POST,                                              ///< HTTP POST method
+        HTTP_PUT,                                               ///< HTTP PUT method
+        HTTP_PATCH,                                             ///< HTTP PATCH method
+        HTTP_DELETE                                             ///< HTTP DELETE method
     };
 
     /**
      * @brief Configuration options for HTTP requests
      */
     struct RequestConfig {
-        int timeout_seconds = 30;     ///< Request timeout in seconds
-        bool follow_redirects = true; ///< Whether to follow HTTP redirects
-        int max_redirects = 5;        ///< Maximum number of redirects to follow
-        std::map<std::string, std::string> additional_headers; ///< Custom headers
-        bool verify_ssl = true;       ///< Enable SSL certificate verification
-        bool use_tls12_or_higher = true; ///< Enforce TLS 1.2 or higher
-        int max_retries = 3;          ///< Number of retry attempts
-        int retry_delay_ms = 1000;    ///< Delay between retries in milliseconds
-        std::string api_key;          ///< API key for authentication
-        std::string oauth_token;      ///< OAuth token for authentication
-        int rate_limit_per_minute = 0;///< Rate limiting (0 = disabled)
-        bool use_http2 = true;        ///< Use HTTP/2 if available
-        bool async_request = false;   ///< Make request asynchronously
+        int timeout_seconds = 30;                               ///< Request timeout in seconds
+        bool follow_redirects = true;                           ///< Whether to follow HTTP redirects
+        int max_redirects = 5;                                  ///< Maximum number of redirects to follow
+        std::map<std::string, std::string> additional_headers;  ///< Custom headers
+        bool verify_ssl = true;                                 ///< Enable SSL certificate verification
+        bool use_tls12_or_higher = true;                        ///< Enforce TLS 1.2 or higher
+        int max_retries = 3;                                    ///< Number of retry attempts
+        int retry_delay_ms = 1000;                              ///< Delay between retries in milliseconds
+        std::string api_key;                                    ///< API key for authentication
+        std::string oauth_token;                                ///< OAuth token for authentication
+        int rate_limit_per_minute = 0;                          ///< Rate limiting (0 = disabled)
+        bool use_http2 = true;                                  ///< Use HTTP/2 if available
+        bool async_request = false;                             ///< Make request asynchronously
     };
 
     /**
      * @brief HTTP response structure
      */
     struct NetworkResponse {
-        int status_code = 0;          ///< HTTP status code
-        std::string body;             ///< Response body
-        std::map<std::string, std::string> headers; ///< Response headers
-        bool success = false;         ///< Whether request was successful
-        std::string error_message;    ///< Error message if request failed
+        int status_code = 0;                                    ///< HTTP status code
+        std::string body;                                       ///< Response body
+        std::map<std::string, std::string> headers;             ///< Response headers
+        bool success = false;                                   ///< Whether request was successful
+        std::string error_message;                              ///< Error message if request failed
     };
 
     /**
@@ -238,18 +238,18 @@ private:
         std::string& path,
         int& port
     );
-    
-    static HINTERNET hSession;        ///< Global WinHTTP session handle
-    static std::mutex sessionMutex;   ///< Mutex for session handle access
-    static std::mutex requestMutex;   ///< Mutex for request synchronization
-    
+
+    static HINTERNET hSession;                                  ///< Global WinHTTP session handle
+    static std::mutex sessionMutex;                             ///< Mutex for session handle access
+    static std::mutex requestMutex;                             ///< Mutex for request synchronization
+
     // Rate limiting support
     struct RateLimitInfo {
         std::chrono::steady_clock::time_point lastRequest;
         int requestCount;
     };
-    static std::map<std::string, RateLimitInfo> rateLimitMap;  ///< Rate limit tracking per host
-    static std::mutex rateLimitMutex;  ///< Mutex for rate limit map access
+    static std::map<std::string, RateLimitInfo> rateLimitMap;   ///< Rate limit tracking per host
+    static std::mutex rateLimitMutex;                           ///< Mutex for rate limit map access
 
     /**
      * @brief Applies rate limiting for a host
