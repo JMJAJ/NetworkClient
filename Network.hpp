@@ -1,6 +1,7 @@
 /**
  * @file Network.hpp
  * @brief HTTP Network Communication Library using WinINet
+ *
  * This library provides a modern C++ wrapper around the Windows Internet (WinINet) API,
  * offering a simple interface for making HTTP/HTTPS requests while handling common
  * scenarios like SSL, timeouts, retries, and rate limiting.
@@ -38,6 +39,7 @@
 
  /**
   * @brief Main networking class providing HTTP communication capabilities
+  *
   * This class provides a static interface for making HTTP requests using WinINet.
   * It handles connection management, request configuration, and response processing.
   */
