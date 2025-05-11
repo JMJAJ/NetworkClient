@@ -383,14 +383,6 @@ The codebase includes comprehensive documentation with:
    - Certain special domain formats may not be properly validated
    - Improvements planned for future releases
 
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
@@ -400,13 +392,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Author: Jxint
 - Version: 1.1.0
 - Last Updated: December 2024
-
-## Support
-
-For support, please:
-1. Check the [Issues](https://github.com/JMJAJ/NetworkClient/issues) page
-2. Create a new issue if your problem isn't already listed
-3. Provide as much detail as possible about your environment and the issue
 
 ## Roadmap
 
